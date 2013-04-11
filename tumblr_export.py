@@ -5,6 +5,7 @@
 import re
 import os.path
 import argparse
+import urllib.parse
 
 import jinja2
 import requests
@@ -22,8 +23,9 @@ TEMPLATE = jinja2.Template('''
 ---
 layout: post
 title: "{{ post.title }}"
-date: {{ post.date.strftime("%H-%m-%d %H:%M") }}
+date: {{ post.date.strftime("%Y-%m-%d %H:%M") }}
 comments: true
+tumblr_id: {{ post.id }}
 categories:
     {%- for tag in post.tags %}
     - {{ tag }}
@@ -60,21 +62,22 @@ class PostConverter(object):
         self.middlewares = []
 
     def open_postfile(self, slug, date):
-        filename = "%s-%s" % (date.strftime("%Y-%m-%d"), slug.strip("-"))
+        daterepr = date.strftime("%Y-%m-%d")
+        filename = "%s-%s.markdown" % (daterepr, slug.strip("-"))
         return open(os.path.join(self.target_directory, filename), "w")
 
-    def record_redirect(self, post_id, slug):
-        old_url = "/post/%d/%s" % (post_id, slug)
-        new_url = "/post/%s" % slug
-        with open(os.path.join(self.target_directory, "_redirect"), "a") as db:
-            db.write("%s:%s\n" % (old_url, new_url))
+    def record_redirect(self, old_url, slug):
+        newloc = urllib.parse.urlparse(old_url).netloc
+        new_url = "http://%s/post/%s" % (newloc, slug)
+        with open(os.path.join(self.target_directory, "_urlmaps"), "a") as db:
+            db.write("%s, %s\n" % (old_url, new_url))
 
     def convert(self, post):
         with self.open_postfile(post["slug"], post["date"]) as postfile:
             for middleware in self.middlewares:
                 post["body"] = middleware(post["body"])
             postfile.write(self.template.render(post=post))
-        self.record_redirect(post["id"], post["slug"])
+        self.record_redirect(post["post_url"], post["slug"])
 
 
 class CodeBlockMiddleware(object):

@@ -16,7 +16,7 @@ import dateutil.tz
 API_KEY = "fuiKNFp9vQFvjLNvx4sUwti4Yb5yGutBN4Xh10LXZhhRKjWlV4"
 API_URL = "http://api.tumblr.com/v2/blog"
 API_URL_POSTS = API_URL + "/{domain}/posts/{post_type}" \
-    "?api_key={api_key}&filter=raw"
+    "?api_key={api_key}&filter=raw&offset={offset}&limit={limit}"
 
 
 TEMPLATE = jinja2.Template('''
@@ -36,9 +36,10 @@ categories:
 '''.strip())
 
 
-def get_posts(domain, post_type="text"):
+def get_posts(domain, post_type="text", offset=0, limit=20):
     url = API_URL_POSTS.format(url_base=API_URL, domain=domain,
-                               post_type=post_type, api_key=API_KEY)
+                               post_type=post_type, api_key=API_KEY,
+                               offset=offset, limit=limit)
     data = requests.get(url).json()
     assert data["meta"]["status"] == 200, repr(data["meta"])
     for post in data["response"]["posts"]:
@@ -113,12 +114,17 @@ def main():
     option.add_argument("-t", "--target-directory", type=str,
                         default="./posts",
                         help="The target directory to locate output files")
+    option.add_argument("--offset", type=int, default=0,
+                        help="The post number to start at.")
+    option.add_argument("--limit", type=int, default=20,
+                        help="The number of posts to return: 1–20.")
     args = option.parse_args()
 
     #: convert posts
     converter = PostConverter(args.target_directory, TEMPLATE)
     converter.middlewares.append(CodeBlockMiddleware())
-    for post in get_posts(args.domain):
+    posts = get_posts(args.domain, offset=args.offset, limit=args.limit)
+    for post in posts:
         converter.convert(post)
         print("* %d:%s" % (post["id"], post["slug"]))
 

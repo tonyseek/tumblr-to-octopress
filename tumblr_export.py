@@ -35,19 +35,26 @@ categories:
 '''.strip())
 
 
-def get_posts(domain, post_type="text", offset=0, limit=20):
+def get_posts(domain, post_type="text", offset=0, limit=200):
     url = API_URL_POSTS.format(url_base=API_URL, domain=domain,
                                post_type=post_type, api_key=API_KEY,
                                offset=offset, limit=limit)
     data = requests.get(url).json()
     assert data["meta"]["status"] == 200, repr(data["meta"])
-    for post in data["response"]["posts"]:
+    posts = data["response"]["posts"]
+
+    for post in posts:
         post["utcdate"] = dateutil.parser.parse(post["date"])
         post["date"] = post["utcdate"].astimezone(dateutil.tz.tzlocal())
         if not post["slug"].strip():
             post["slug"] = str(post["id"])
         post["new_slug"] = post["slug"]
         yield post
+
+    #: paginate
+    if limit - offset > 20:
+        for post in get_posts(domain, post_type, offset + 20, limit):
+            yield post
 
 
 class PostConverter(object):
@@ -164,7 +171,7 @@ def main():
                         help="target directory to locate output files")
     option.add_argument("--offset", type=int, default=0,
                         help="post number to start at")
-    option.add_argument("--limit", type=int, default=20,
+    option.add_argument("--limit", type=int, default=200,
                         help="number of posts to return")
     option.add_argument("--disqus-url-map", type=str,
                         default="./disqus-url-map.csv",

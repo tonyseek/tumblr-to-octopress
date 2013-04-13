@@ -83,7 +83,7 @@ class PostConverter(object):
 class CodeBlockMiddleware(object):
 
     def __init__(self):
-        self.re_begin = re.compile(r'<pre' r'\s' r'class="brush:(\w+)">')
+        self.re_begin = re.compile(r'<pre(?:\s+class="brush:\s*(\w+)")?>')
         self.re_end = re.compile(r'</pre>')
         self.is_in_block = False
 

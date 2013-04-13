@@ -47,6 +47,7 @@ def get_posts(domain, post_type="text", offset=0, limit=20):
         post["date"] = post["utcdate"].astimezone(dateutil.tz.tzlocal())
         if not post["slug"].strip():
             post["slug"] = str(post["id"])
+        post["new_slug"] = post["slug"]
         yield post
 
 
@@ -62,33 +63,45 @@ class PostConverter(object):
         self.template = template
         self.middlewares = []
 
-    def open_postfile(self, slug, date):
+    def open_postfile(self, new_slug, date):
         daterepr = date.strftime("%Y-%m-%d")
-        filename = "%s-%s.markdown" % (daterepr, slug.strip("-"))
+        cleaned_slug = "-".join(p for p in new_slug.split("-") if p)
+        filename = "%s-%s.markdown" % (daterepr, cleaned_slug)
         return open(os.path.join(self.target_directory, filename), "w")
 
     def convert(self, post):
-        with self.open_postfile(post["slug"], post["date"]) as postfile:
-            for middleware in self.middlewares:
-                post = middleware(post)
+        for middleware in self.middlewares:
+            post = middleware(post)
+        with self.open_postfile(post["new_slug"], post["date"]) as postfile:
             postfile.write(self.template.render(post=post))
 
 
 class DisqusMigrationMiddleware(object):
 
-    def __init__(self, from_domain, to_domain, output_file, has_slug=False):
-        self.from_domain = from_domain
+    def __init__(self, to_domain, output_file, has_slug=False):
         self.to_domain = to_domain
         self.output_file = output_file
         self.has_slug = has_slug
 
     def __call__(self, post):
-        new_url = "http://%s/post/%s" % (self.to_domain, post["slug"])
+        new_url = "http://%s/post/%s" % (self.to_domain, post["new_slug"])
         old_url = "http://%s/post/%s" % (self.to_domain, post["id"])
-        if self.has_slug:
+        if self.has_slug and post["slug"] != post["id"]:
             old_url += "/%s" % post["slug"]
         with open(self.output_file, "a") as csv_file:
             csv_file.write("%s, %s\n" % (old_url, new_url))
+        return post
+
+
+class NginxMapMiddleware(object):
+
+    def __init__(self, output_file):
+        self.output_file = output_file
+
+    def __call__(self, post):
+        args = (post["id"], post["new_slug"])
+        with open(self.output_file, "a") as conf_file:
+            conf_file.write("~^/post/%s(/.*)?  /post/%s;\n" % args)
         return post
 
 
@@ -119,39 +132,60 @@ class CodeBlockMiddleware(object):
         return post
 
 
+def screen_log_middleware(post):
+    print("* %d:%s:%s" % (post["id"], post["slug"], post["new_slug"]))
+    return post
+
+
+def rename_slug_middleware(post):
+    new_slug = input("[{id}] {slug} {title}: ".format(**post)).strip()
+    if new_slug:
+        post["new_slug"] = new_slug
+    return post
+
+
 def main():
     #: parse arguments
     option = argparse.ArgumentParser(description=__doc__)
     option.add_argument("-f", "--from-domain", required=True, type=str,
-                        help="The domain of tumblr blog")
+                        help="domain of tumblr blog")
     option.add_argument("-t", "--to-domain", required=True, type=str,
-                        help="The new domain")
+                        help="domain of new site")
     option.add_argument("-o", "--output-directory", type=str,
                         default="./posts",
-                        help="The target directory to locate output files")
+                        help="target directory to locate output files")
     option.add_argument("--offset", type=int, default=0,
-                        help="The post number to start at")
+                        help="post number to start at")
     option.add_argument("--limit", type=int, default=20,
-                        help="The number of posts to return")
+                        help="number of posts to return")
     option.add_argument("--disqus-url-map", type=str,
                         default="./disqus-url-map.csv",
-                        help="The url map file for disqus migration")
+                        help="url map file for disqus migration")
     option.add_argument("--disqus-url-map-has-slug", type=bool, default=False,
-                        help="The tumblr urls included slug or not.")
+                        help="tumblr urls included slug or not.")
+    option.add_argument("--nginx-url-map", type=str,
+                        default="./nginx-url-map.conf",
+                        help="url map file for nginx")
+    option.add_argument("--rename-slug", type=bool, default=False,
+                        help="rename slug of urls or not")
     args = option.parse_args()
 
     #: convert posts
     converter = PostConverter(args.output_directory, TEMPLATE)
+    if args.rename_slug:
+        converter.middlewares.append(rename_slug_middleware)
+    else:
+        converter.middlewares.append(screen_log_middleware)
     converter.middlewares.extend([
         CodeBlockMiddleware(),
-        DisqusMigrationMiddleware(args.from_domain, args.to_domain,
+        DisqusMigrationMiddleware(args.to_domain,
                                   output_file=args.disqus_url_map,
                                   has_slug=args.disqus_url_map_has_slug),
+        NginxMapMiddleware(output_file=args.nginx_url_map),
     ])
     posts = get_posts(args.from_domain, offset=args.offset, limit=args.limit)
     for post in posts:
         converter.convert(post)
-        print("* %d:%s" % (post["id"], post["slug"]))
 
 
 if __name__ == "__main__":

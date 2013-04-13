@@ -67,18 +67,29 @@ class PostConverter(object):
         filename = "%s-%s.markdown" % (daterepr, slug.strip("-"))
         return open(os.path.join(self.target_directory, filename), "w")
 
-    def record_redirect(self, old_url, slug):
-        newloc = urllib.parse.urlparse(old_url).netloc
-        new_url = "http://%s/post/%s" % (newloc, slug)
-        with open(os.path.join(self.target_directory, "_urlmaps"), "a") as db:
-            db.write("%s, %s\n" % (old_url, new_url))
-
     def convert(self, post):
         with self.open_postfile(post["slug"], post["date"]) as postfile:
             for middleware in self.middlewares:
-                post["body"] = middleware(post["body"])
+                post = middleware(post)
             postfile.write(self.template.render(post=post))
-        self.record_redirect(post["post_url"], post["slug"])
+
+
+class DisqusMigrationMiddleware(object):
+
+    def __init__(self, from_domain, to_domain, output_file, has_slug=False):
+        self.from_domain = from_domain
+        self.to_domain = to_domain
+        self.output_file = output_file
+        self.has_slug = has_slug
+
+    def __call__(self, post):
+        new_url = "http://%s/post/%s" % (self.to_domain, post["slug"])
+        old_url = "http://%s/post/%s" % (self.to_domain, post["id"])
+        if self.has_slug:
+            old_url += "/%s" % post["slug"]
+        with open(self.output_file, "a") as csv_file:
+            csv_file.write("%s, %s\n" % (old_url, new_url))
+        return post
 
 
 class CodeBlockMiddleware(object):
@@ -102,28 +113,42 @@ class CodeBlockMiddleware(object):
                 line = line.replace("&gt;", ">").replace("&lt;", "<")
             return line
 
-    def __call__(self, body):
-        return "\n".join(self._handle_line(l) for l in body.split("\n"))
+    def __call__(self, post):
+        post["body"] = "\n".join(self._handle_line(line)
+                                 for line in post["body"].split("\n"))
+        return post
 
 
 def main():
     #: parse arguments
     option = argparse.ArgumentParser(description=__doc__)
-    option.add_argument("-d", "--domain", required=True, type=str,
+    option.add_argument("-f", "--from-domain", required=True, type=str,
                         help="The domain of tumblr blog")
-    option.add_argument("-t", "--target-directory", type=str,
+    option.add_argument("-t", "--to-domain", required=True, type=str,
+                        help="The new domain")
+    option.add_argument("-o", "--output-directory", type=str,
                         default="./posts",
                         help="The target directory to locate output files")
     option.add_argument("--offset", type=int, default=0,
-                        help="The post number to start at.")
+                        help="The post number to start at")
     option.add_argument("--limit", type=int, default=20,
-                        help="The number of posts to return: 1–20.")
+                        help="The number of posts to return")
+    option.add_argument("--disqus-url-map", type=str,
+                        default="./disqus-url-map.csv",
+                        help="The url map file for disqus migration")
+    option.add_argument("--disqus-url-map-has-slug", type=bool, default=False,
+                        help="The tumblr urls included slug or not.")
     args = option.parse_args()
 
     #: convert posts
-    converter = PostConverter(args.target_directory, TEMPLATE)
-    converter.middlewares.append(CodeBlockMiddleware())
-    posts = get_posts(args.domain, offset=args.offset, limit=args.limit)
+    converter = PostConverter(args.output_directory, TEMPLATE)
+    converter.middlewares.extend([
+        CodeBlockMiddleware(),
+        DisqusMigrationMiddleware(args.from_domain, args.to_domain,
+                                  output_file=args.disqus_url_map,
+                                  has_slug=args.disqus_url_map_has_slug),
+    ])
+    posts = get_posts(args.from_domain, offset=args.offset, limit=args.limit)
     for post in posts:
         converter.convert(post)
         print("* %d:%s" % (post["id"], post["slug"]))

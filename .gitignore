@@ -1,5 +1,7 @@
 *.py[co]
 *.log
 *.swp
+*.csv
+*.conf
 /venv
 /posts

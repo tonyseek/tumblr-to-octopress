@@ -5,7 +5,6 @@
 import re
 import os.path
 import argparse
-import urllib.parse
 
 import jinja2
 import requests
@@ -71,9 +70,16 @@ class PostConverter(object):
 
     def convert(self, post):
         for middleware in self.middlewares:
-            post = middleware(post)
+            try:
+                post = middleware(post)
+            except SkipPostException:
+                return
         with self.open_postfile(post["new_slug"], post["date"]) as postfile:
             postfile.write(self.template.render(post=post))
+
+
+class SkipPostException(Exception):
+    pass
 
 
 class DisqusMigrationMiddleware(object):
@@ -140,6 +146,8 @@ def screen_log_middleware(post):
 def rename_slug_middleware(post):
     new_slug = input("[{id}] {slug} {title}: ".format(**post)).strip()
     if new_slug:
+        if new_slug == "!":
+            raise SkipPostException
         post["new_slug"] = new_slug
     return post
 
@@ -166,13 +174,16 @@ def main():
     option.add_argument("--nginx-url-map", type=str,
                         default="./nginx-url-map.conf",
                         help="url map file for nginx")
-    option.add_argument("--rename-slug", type=bool, default=False,
+    option.add_argument("--rename-slug", type=bool, default=True,
                         help="rename slug of urls or not")
     args = option.parse_args()
 
     #: convert posts
     converter = PostConverter(args.output_directory, TEMPLATE)
     if args.rename_slug:
+        print("-- type new slug after the prompt")
+        print("-- if you type empty string, the origin value will be keep")
+        print("-- if you type '!', the post will be skiped")
         converter.middlewares.append(rename_slug_middleware)
     else:
         converter.middlewares.append(screen_log_middleware)

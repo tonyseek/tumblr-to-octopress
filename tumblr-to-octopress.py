@@ -10,6 +10,7 @@ import jinja2
 import requests
 import dateutil.parser
 import dateutil.tz
+from jinja2.filters import do_striptags as striptags
 
 
 API_KEY = "fuiKNFp9vQFvjLNvx4sUwti4Yb5yGutBN4Xh10LXZhhRKjWlV4"
@@ -31,7 +32,20 @@ categories:
     {%- endfor %}
 ---
 
-{{ post.body }}
+{% if post.type == "text" %}
+    {{- post.body }}
+{% elif post.type == "photo" %}
+    {{- post.caption }}
+    {%- for photo in post.photos %}
+        {{- '[![' -}}
+            {{- photo.caption or post.caption -}}
+        {{- '](' -}}
+            {{- photo.original_size.url -}}
+        {{- ')](' -}}
+            {{- post.link_url -}}
+        {{- ')' -}}
+    {%- endfor %}
+{% endif %}
 '''.strip())
 
 
@@ -48,7 +62,10 @@ def get_posts(domain, post_type="text", offset=0, limit=200):
         post["date"] = post["utcdate"].astimezone(dateutil.tz.tzlocal())
         if not post["slug"].strip():
             post["slug"] = str(post["id"])
-        post["new_slug"] = post["slug"]
+        post.setdefault("title", striptags(post.get("caption", "")))
+        post.setdefault("new_slug", post.get("slug", ""))
+        if post["type"] == "photo":
+            post["tags"].append("照片")
         yield post
 
     #: paginate
@@ -146,8 +163,11 @@ class CodeBlockMiddleware(object):
             return line
 
     def __call__(self, post):
-        post["body"] = "\n".join(self._handle_line(line)
-                                 for line in post["body"].split("\n"))
+        if post["type"] == "text":
+            post["body"] = "\n".join(
+                self._handle_line(line)
+                for line in post["body"].split("\n")
+            )
         return post
 
 
@@ -175,6 +195,8 @@ def main():
     option.add_argument("-o", "--output-directory", type=str,
                         default="./posts",
                         help="target directory to locate output files")
+    option.add_argument("--post-type", type=str, default="text",
+                        help="type of post")
     option.add_argument("--offset", type=int, default=0,
                         help="post number to start at")
     option.add_argument("--limit", type=int, default=200,
@@ -207,7 +229,8 @@ def main():
                                   has_slug=args.disqus_url_map_has_slug),
         NginxMapMiddleware(output_file=args.nginx_url_map),
     ])
-    posts = get_posts(args.from_domain, offset=args.offset, limit=args.limit)
+    posts = get_posts(args.from_domain, args.post_type, args.offset,
+                      args.limit)
     for post in posts:
         converter.convert(post)
 

@@ -130,7 +130,13 @@ class CodeBlockMiddleware(object):
         matched_end = self.re_end.match(line)
         if matched_begin:
             self.is_in_block = True
-            return "```%s" % matched_begin.group(1)
+            language_type = matched_begin.group(1)
+            if language_type == "shell":
+                language_type = "sh"
+            if not language_type:
+                return "```"
+            else:
+                return "```%s" % language_type
         elif matched_end:
             self.is_in_block = False
             return "```"

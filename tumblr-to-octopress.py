@@ -53,7 +53,7 @@ def get_posts(domain, post_type="text", offset=0, limit=200):
     url = API_URL_POSTS.format(url_base=API_URL, domain=domain,
                                post_type=post_type, api_key=API_KEY,
                                offset=offset, limit=limit)
-    data = requests.get(url).json()
+    data = requests.get(url).json
     assert data["meta"]["status"] == 200, repr(data["meta"])
     posts = data["response"]["posts"]
 
